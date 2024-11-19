@@ -4,7 +4,7 @@ import * as chart from 'chart.js';
 // Clase para el componente
 
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseconfig'; // Asegúrate de que `firebase-config.js` exporte correctamente `db`
+// Asegúrate de que `firebase-config.js` exporte correctamente `db`
 
 class ProductChart extends LitElement {
     static styles = css`
