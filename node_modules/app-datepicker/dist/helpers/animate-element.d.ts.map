@@ -1,0 +1,1 @@
+{"version":3,"file":"animate-element.d.ts","sourceRoot":"","sources":["../../src/helpers/animate-element.ts"],"names":[],"mappings":"AAAA,UAAU,qBAAqB;IAC7B,qBAAqB,CAAC,EAAE,OAAO,CAAC;IAChC,SAAS,CAAC,EAAE,QAAQ,EAAE,CAAC;IACvB,OAAO,CAAC,EAAE,wBAAwB,CAAC;CACpC;AAED,wBAAsB,cAAc,CAClC,IAAI,EAAE,WAAW,EACjB,IAAI,EAAE,qBAAqB,GAC1B,OAAO,CAAC,IAAI,CAAC,CA+Bf"}
