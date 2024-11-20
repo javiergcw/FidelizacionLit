@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Consumo Total de Productos</title>
+  <title>Estadisticas clientes fidelizados</title>
   <script type="module" src="./components/consumo-producto-total.js"></script>
   <script type="module" src="./components/consumo-producto-usuario.js"></script>
   <script type="module" src="./components/consumo-dinero-total.js"></script>
@@ -22,18 +22,19 @@
       margin: 0;
       padding: 0;
       display: flex;
-      justify-content: center;
+      flex-direction: column;
+      /* Ajusta los gráficos verticalmente */
       align-items: center;
-      min-height: 100vh;
       background-color: #f4f4f4;
     }
   </style>
+
 </head>
 
 <body>
-    <firebase-data-chart></firebase-data-chart>
-   <!-- <firebase-user-product-chart></firebase-user-product-chart> -->
-   <!-- <payment-method-consumption-chart></payment-method-consumption-chart> -->
+  <firebase-data-charts></firebase-data-charts>
+  <firebase-user-product-chart></firebase-user-product-chart>
+  <!-- <payment-method-consumption-chart></payment-method-consumption-chart> -->
   <!-- <consumo-por-usuario-chart></consumo-por-usuario-chart>  -->
   <!-- <visitas-por-hora-chart></visitas-por-hora-chart>  -->
   <!-- <visitas-por-hora-por-usuario-chart></visitas-por-hora-por-usuario-chart> -->

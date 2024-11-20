@@ -1,39 +1,111 @@
 import { LitElement, html, css } from "lit";
 import * as chart from "chart.js";
-import { Producto, DatosFidelización, Pago } from "../models/DatosFidelizacionModel";
+import { Producto } from "../models/DatosFidelizacionModel";
 import { db } from "../firebaseConfig";
 import { collection, getDocs } from "firebase/firestore";
 
-class FirebaseDataChart extends LitElement {
+class FirebaseDataCharts extends LitElement {
   static styles = css`
-    canvas {
-      width: 100%;
-      height: 400px;
-    }
-    select,
-    input {
-      margin: 10px;
-      padding: 5px;
-      font-size: 1em;
-    }
-  `;
+.chart-container {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto; /* Habilita el scroll horizontal */
+  overflow-y: hidden; /* Elimina el scroll vertical */
+  padding: 10px;
+  white-space: nowrap; /* Previene el salto de línea */
+  box-sizing: border-box; /* Asegura que el padding no agregue tamaño adicional */
+  scroll-behavior: smooth; /* Suaviza el desplazamiento */
+}
+
+
+
+ .chart-item {
+  flex: 0 0 auto; /* Evita que los gráficos se redimensionen */
+  width: 90%; /* En pantallas pequeñas, los gráficos ocupan el 90% del viewport */
+  max-width: 400px; /* Límite máximo para pantallas grandes */
+  height: auto; /* Ajusta la altura dinámicamente */
+  margin: 0;
+}
+
+
+
+canvas {
+  width: 100%; /* Ocupa todo el ancho del contenedor */
+  height: auto; /* Mantiene la proporción */
+  max-height: 300px; /* Límite máximo de altura */
+  box-sizing: border-box; /* Asegura que el padding no afecte el tamaño */
+}
+
+
+  .filters {
+    margin-bottom: 10px;
+    width: 100%;
+    text-align: center;
+  }
+
+  select,
+  input {
+    margin: 5px;
+    padding: 5px;
+    font-size: 1em;
+    width: 90%;
+  }
+
+  label {
+    font-size: 1em;
+    margin-bottom: 5px;
+    display: block;
+  }
+
+  .chart-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chart-container {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  h1 {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 1.5em;
+    color: #333;
+  }
+    @media (max-width: 768px) {
+  .chart-container {
+    gap: 10px; /* Reduce el espacio entre gráficos */
+  }
+
+  .chart-item {
+    width: 90%; /* Los gráficos ocupan casi todo el ancho del viewport */
+    max-width: none; /* Elimina restricciones de ancho máximo */
+  }
+}
+
+`;
 
   static properties = {
     datos: { type: Array },
-    filtro: { type: String },
-    seleccionDia: { type: String },
-    seleccionMes: { type: String },
-    seleccionAno: { type: String },
+    chartInstances: { type: Object },
+    filtros: { type: Object },
+    totals: { type: Object }, // Nuevo: Para almacenar los totales
   };
+
+
 
   constructor() {
     super();
     this.datos = [];
-    this.filtro = "mes"; // Valor predeterminado
-    this.seleccionDia = "";
-    this.seleccionMes = "";
-    this.seleccionAno = "";
+    this.chartInstances = {};
+    this.filtros = {
+      dia: new Date().toISOString().split("T")[0],
+      mes: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+      ano: new Date().getFullYear().toString(),
+    };
+    this.totals = { dia: 0, mes: 0, ano: 0 }; // Inicializa los totales
   }
+
 
   connectedCallback() {
     super.connectedCallback();
@@ -54,25 +126,10 @@ class FirebaseDataChart extends LitElement {
           Object.keys(parentItem).forEach((id) => {
             const item = parentItem[id];
 
-            const fechaFin =
-              item.fecha_fin && item.fecha_fin.toDate
-                ? item.fecha_fin.toDate()
-                : "Fecha no disponible";
             const fechaInicio =
               item.fecha_inicio && item.fecha_inicio.toDate
                 ? item.fecha_inicio.toDate()
-                : "Fecha no disponible";
-
-            const pagos = item.pago
-              ? Object.values(item.pago).map(
-                (p) =>
-                  new Pago(
-                    p?.propina || 0,
-                    p?.tipo || "desconocido",
-                    p?.total || 0
-                  )
-              )
-              : [];
+                : null;
 
             const productos = item.producto
               ? Object.values(item.producto).map(
@@ -86,202 +143,211 @@ class FirebaseDataChart extends LitElement {
               )
               : [];
 
-            datosFidelizacion.push(
-              new DatosFidelización(fechaFin, fechaInicio, pagos, productos)
-            );
+            datosFidelizacion.push({
+              fecha_inicio: fechaInicio,
+              productos,
+            });
           });
         });
       });
 
       this.datos = datosFidelizacion;
-      this.updateChart();
+      this.updateAllCharts();
     } catch (error) {
       console.error("Error fetching data from Firebase:", error);
     }
   }
 
-  applyFilter() {
-    let startDate, endDate;
-
-    if (this.filtro === "dia" && this.seleccionDia) {
-      // Fecha exacta para el día seleccionado
-      const selectedDate = new Date(this.seleccionDia);
-      startDate = new Date(
-        selectedDate.getFullYear(),
-        selectedDate.getMonth(),
-        selectedDate.getDate()
-      );
-      endDate = new Date(
-        selectedDate.getFullYear(),
-        selectedDate.getMonth(),
-        selectedDate.getDate()
-      );
-      endDate.setHours(23, 59, 59, 999); // Final del día
-    } else if (this.filtro === "mes" && this.seleccionMes) {
-      const [year, month] = this.seleccionMes.split("-");
-      startDate = new Date(year, month - 1, 1); // Inicio del mes
-      endDate = new Date(year, month, 0); // Fin del mes
-      endDate.setHours(23, 59, 59, 999);
-    } else if (this.filtro === "año" && this.seleccionAno) {
-      const year = parseInt(this.seleccionAno, 10);
-      startDate = new Date(year, 0, 1); // Inicio del año
-      endDate = new Date(year, 11, 31); // Fin del año
-      endDate.setHours(23, 59, 59, 999);
-    } else {
-      // Sin filtro, usar todas las fechas
-      startDate = new Date(0); // Desde el inicio del tiempo
-      endDate = new Date(); // Hasta ahora
-      endDate.setHours(23, 59, 59, 999); // Asegurarse de incluir el final del día actual
+  applyFilter(type) {
+    if (!this.filtros[type]) {
+      console.log("Tipo de filtro no configurado o no soportado:", type);
+      return [];
     }
 
-    // Filtrar los datos únicamente por fecha_inicio
-    return this.datos.filter((d) => {
-      if (d.fecha_inicio && d.fecha_inicio instanceof Date) {
-        return d.fecha_inicio >= startDate && d.fecha_inicio <= endDate;
-      }
-      return false; // Excluir datos sin fecha válida
-    });
-  }
+    if (type === "dia") {
+      const selectedDateStr = this.filtros.dia; // Fecha seleccionada como string (YYYY-MM-DD)
+      console.log("Filtro seleccionado (día):", type, selectedDateStr);
 
-  handleFilterChange(event) {
-    this.filtro = event.target.value;
-    this.updateChart();
-  }
+      return this.datos.filter((d) => {
+        const fechaInicio = d.fecha_inicio instanceof Date ? d.fecha_inicio : new Date(d.fecha_inicio);
+        if (isNaN(fechaInicio.getTime())) {
+          console.log("Fecha inválida encontrada:", d.fecha_inicio);
+          return false;
+        }
 
-  handleDateChange(event) {
-    const value = event.target.value;
+        const offsetTime = new Date(fechaInicio);
+        offsetTime.setHours(offsetTime.getHours() - 5); // Ajustar a UTC-5 si es necesario
+        const fechaInicioStr = offsetTime.toISOString().split("T")[0];
 
-    if (this.filtro === "dia") {
-      this.seleccionDia = value || new Date().toISOString().split("T")[0]; // Día actual predeterminado
-    } else if (this.filtro === "mes") {
-      this.seleccionMes = value || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-    } else if (this.filtro === "año") {
-      this.seleccionAno = value || `${new Date().getFullYear()}`;
+        const isSameDay = fechaInicioStr === selectedDateStr;
+        console.log("Revisando fecha de inicio (día):", { fechaInicioStr, isSameDay, dato: d });
+        return isSameDay;
+      });
     }
 
-    this.updateChart(); // Forzar la actualización del gráfico
+    if (type === "mes") {
+      const [selectedYear, selectedMonth] = this.filtros.mes.split("-").map(Number); // Año y mes seleccionados
+      console.log("Filtro seleccionado (mes):", type, this.filtros.mes);
+
+      return this.datos.filter((d) => {
+        const fechaInicio = d.fecha_inicio instanceof Date ? d.fecha_inicio : new Date(d.fecha_inicio);
+        if (isNaN(fechaInicio.getTime())) {
+          console.log("Fecha inválida encontrada:", d.fecha_inicio);
+          return false;
+        }
+
+        const offsetTime = new Date(fechaInicio);
+        offsetTime.setHours(offsetTime.getHours() - 5); // Ajustar a UTC-5 si es necesario
+        const isSameMonth =
+          offsetTime.getFullYear() === selectedYear && offsetTime.getMonth() + 1 === selectedMonth;
+        console.log("Revisando fecha de inicio (mes):", { offsetTime, isSameMonth, dato: d });
+        return isSameMonth;
+      });
+    }
+
+    if (type === "ano") {
+      const selectedYear = Number(this.filtros.ano); // Año seleccionado
+      console.log("Filtro seleccionado (año):", type, selectedYear);
+
+      return this.datos.filter((d) => {
+        const fechaInicio = d.fecha_inicio instanceof Date ? d.fecha_inicio : new Date(d.fecha_inicio);
+        if (isNaN(fechaInicio.getTime())) {
+          console.log("Fecha inválida encontrada:", d.fecha_inicio);
+          return false;
+        }
+
+        const offsetTime = new Date(fechaInicio);
+        offsetTime.setHours(offsetTime.getHours() - 5); // Ajustar a UTC-5 si es necesario
+        const isSameYear = offsetTime.getFullYear() === selectedYear;
+        console.log("Revisando fecha de inicio (año):", { offsetTime, isSameYear, dato: d });
+        return isSameYear;
+      });
+    }
+
+    return [];
   }
 
 
-  updateChart() {
-    const ctx = this.shadowRoot.getElementById("chart").getContext("2d");
 
-    // Aplicar filtro a los datos
-    const filteredData = this.applyFilter();
 
+
+
+  updateChart(type) {
+    const filteredData = this.applyFilter(type);
     const labels = [];
     const data = [];
     const colors = [];
+    let total = 0; // Variable para calcular el total
 
-    const generateColor = () =>
-      `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(
-        Math.random() * 255
-      )}, 0.6)`;
-
-    this.datos.forEach((dato) => {
-      dato.producto.forEach((producto) => {
+    filteredData.forEach((dato) => {
+      dato.productos.forEach((producto) => {
         const index = labels.indexOf(producto.producto);
-        const total = filteredData.includes(dato)
-          ? parseInt(producto.cantidad) * parseInt(producto.precio)
-          : 0;
+        const subtotal = parseInt(producto.cantidad) * parseInt(producto.precio);
+        total += subtotal; // Suma al total
 
         if (index !== -1) {
-          data[index] += total;
+          data[index] += subtotal;
         } else {
           labels.push(producto.producto);
-          data.push(total);
-          colors.push(generateColor());
+          data.push(subtotal);
+          colors.push(`rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 0.6)`);
         }
       });
     });
 
-    const totalConsumo = data.reduce((acc, curr) => acc + curr, 0);
+    this.totals[type] = total; // Almacena el total para este tipo de filtro
 
-    const totalText = this.shadowRoot.getElementById("total-text");
-    if (totalText) {
-      totalText.textContent = `Consumo total acumulado: $${totalConsumo}`;
+    const canvas = this.shadowRoot.querySelector(`#chart-${type}`);
+    const ctx = canvas.getContext("2d");
+
+    if (this.chartInstances[type]) {
+      this.chartInstances[type].destroy();
     }
 
-    // Si ya existe un gráfico, destrúyelo antes de crear uno nuevo
-    if (this.chartInstance) {
-      this.chartInstance.destroy();
-    }
-
-    // Crear un nuevo gráfico
-    this.chartInstance = new Chart(ctx, {
+    this.chartInstances[type] = new Chart(ctx, {
       type: "bar",
       data: {
         labels,
         datasets: [
           {
-            label: "Consumo Total de Productos",
-            data,
-            backgroundColor: colors,
-            borderColor: colors.map((color) =>
-              color.replace("0.6", "1")
-            ),
+            label: `Consumo Total de Productos (${type})`,
+            data: data.length > 0 ? data : [0],
+            backgroundColor: data.length > 0 ? colors : ["rgba(200, 200, 200, 0.6)"],
             borderWidth: 1,
-            barThickness: 30,
+            barThickness: 10, // Grosor de las barras
           },
         ],
       },
       options: {
-        responsive: true,
+        responsive: false,
+        maintainAspectRatio: false,
         scales: {
           y: {
             beginAtZero: true,
+            ticks: {
+              stepSize: 1,
+            },
+          },
+        },
+        plugins: {
+          legend: {
+            display: true,
           },
         },
       },
     });
+
+    // Fuerza el tamaño después de actualizar
+    this.chartInstances[type].resize();
+
+    // Llama a requestUpdate para actualizar el texto debajo del gráfico
+    this.requestUpdate();
+  }
+
+
+
+  updateAllCharts() {
+    ["dia", "mes", "ano"].forEach((type) => this.updateChart(type));
+  }
+
+  handleFilterChange(event, type) {
+    this.filtros[type] = event.target.value;
+    this.updateChart(type);
+  }
+
+  renderChart(type, label, inputType, inputValue) {
+    return html`
+      <div class="chart-item">
+        <div class="filters">
+          <label>${label}:</label>
+          <input
+            type="${inputType}"
+            .value="${this.filtros[type]}"
+            @change="${(e) => this.handleFilterChange(e, type)}"
+          />
+        </div>
+        <canvas id="chart-${type}"></canvas>
+        <p style="text-align: center; font-size: 1em; margin-top: 10px;">
+          Total Consumo (${type}): <strong>${this.totals[type]}</strong>
+        </p>
+      </div>
+    `;
   }
 
 
   render() {
     return html`
-     <h3>Gráfico de consumo de producto total </h3>
-      <select @change="${this.handleFilterChange}">
-        <option value="dia">Día</option>
-        <option value="mes" selected>Mes</option>
-        <option value="año">Año</option>
-      </select>
-  
-      <!-- Inputs dinámicos -->
-      ${this.filtro === "dia"
-        ? html`<input
-            type="date"
-            value="${this.seleccionDia || new Date().toISOString().split("T")[0]}"
-            @change="${this.handleDateChange}"
-          />`
-        : ""}
-      ${this.filtro === "mes"
-        ? html`<input
-            type="month"
-            value="${this.seleccionMes || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`}"
-            @change="${this.handleDateChange}"
-          />`
-        : ""}
-      ${this.filtro === "año"
-        ? html`<input
-            type="number"
-            min="2000"
-            max="2100"
-            placeholder="Año"
-            value="${this.seleccionAno || `${new Date().getFullYear()}`}"
-            @change="${this.handleDateChange}"
-          />`
-        : ""}
-  
-      <canvas id="chart"></canvas>
-      <p
-        id="total-text"
-        style="text-align: center; font-size: 1.2em; font-weight: bold; margin-top: 1em;"
-      >
-        <!-- Aquí se renderizará el texto dinámicamente -->
-      </p>
+      <div>
+        <h1 style="text-align: center; margin-top: 20px;">Consumo de Producto Total</h1>
+        <div class="chart-container">
+          ${this.renderChart("dia", "Filtro por Día", "date", this.filtros.dia)}
+          ${this.renderChart("mes", "Filtro por Mes", "month", this.filtros.mes)}
+          ${this.renderChart("ano", "Filtro por Año", "number", this.filtros.ano)}
+        </div>
+      </div>
     `;
   }
 
 }
 
-customElements.define("firebase-data-chart", FirebaseDataChart);
+customElements.define("firebase-data-charts", FirebaseDataCharts);
