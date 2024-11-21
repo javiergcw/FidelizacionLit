@@ -6,40 +6,57 @@ import { collection, getDocs } from "firebase/firestore";
 
 class VisitasPorHoraChart extends LitElement {
     static styles = css`
-    canvas {
-      width: 100%;
-      height: 400px;
+    .charts-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
     }
+
+canvas {
+  width: 400px; /* Tamaño fijo para evitar redimensionamiento */
+  height: 400px;
+}
+
+.chart-card {
+  flex: 1;
+  text-align: center;
+  min-width: 400px; /* Asegura un espacio mínimo constante */
+}
+
+
     select,
     input {
       margin: 10px;
       padding: 5px;
       font-size: 1em;
     }
+
     .percentages {
       margin-top: 20px;
-      text-align: center;
       font-size: 1.2em;
     }
   `;
 
     static properties = {
         datos: { type: Array },
-        filtro: { type: String },
         seleccionDia: { type: String },
         seleccionMes: { type: String },
         seleccionAno: { type: String },
-        visitasPorcentaje: { type: Object },
+        visitasDia: { type: Object },
+        visitasMes: { type: Object },
+        visitasAno: { type: Object },
     };
 
     constructor() {
         super();
         this.datos = [];
-        this.filtro = "mes"; // Valor predeterminado
-        this.seleccionDia = "";
-        this.seleccionMes = "";
-        this.seleccionAno = "";
-        this.visitasPorcentaje = { mañana: 0, tarde: 0, noche: 0 };
+        this.seleccionDia = new Date().toISOString().split("T")[0];
+        this.seleccionMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+        this.seleccionAno = new Date().getFullYear().toString();
+        this.visitasDia = { mañana: 0, tarde: 0, noche: 0 };
+        this.visitasMes = { mañana: 0, tarde: 0, noche: 0 };
+        this.visitasAno = { mañana: 0, tarde: 0, noche: 0 };
     }
 
     connectedCallback() {
@@ -74,32 +91,13 @@ class VisitasPorHoraChart extends LitElement {
             });
 
             this.datos = datosFidelizacion;
-            this.updateChart();
+            this.updateAllCharts();
         } catch (error) {
             console.error("Error fetching data from Firebase:", error);
         }
     }
 
-    applyFilter() {
-        let startDate, endDate;
-
-        if (this.filtro === "dia" && this.seleccionDia) {
-            const selectedDate = new Date(this.seleccionDia);
-            startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 0, 0, 0);
-            endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
-        } else if (this.filtro === "mes" && this.seleccionMes) {
-            const [year, month] = this.seleccionMes.split("-");
-            startDate = new Date(year, month - 1, 1);
-            endDate = new Date(year, month, 0, 23, 59, 59);
-        } else if (this.filtro === "año" && this.seleccionAno) {
-            const year = parseInt(this.seleccionAno, 10);
-            startDate = new Date(year, 0, 1, 0, 0, 0);
-            endDate = new Date(year, 11, 31, 23, 59, 59);
-        } else {
-            startDate = new Date(0);
-            endDate = new Date();
-        }
-
+    filterDataByRange(startDate, endDate) {
         return this.datos.filter((d) => {
             const fecha = d.fecha_inicio;
             return fecha >= startDate && fecha <= endDate;
@@ -121,36 +119,27 @@ class VisitasPorHoraChart extends LitElement {
             }
         });
 
-        const porcentajes = {
+        return {
             mañana: ((conteo.mañana / totalVisitas) * 100).toFixed(2),
             tarde: ((conteo.tarde / totalVisitas) * 100).toFixed(2),
             noche: ((conteo.noche / totalVisitas) * 100).toFixed(2),
         };
-
-        this.visitasPorcentaje = porcentajes;
-        return porcentajes;
     }
 
-    updateChart() {
-        const ctx = this.shadowRoot.querySelector("canvas").getContext("2d");
-        const filteredData = this.applyFilter();
-        const visitasPorcentaje = this.calculateVisits(filteredData);
+    updateChart(chartId, data) {
+        const ctx = this.shadowRoot.querySelector(`#${chartId}`).getContext("2d");
 
-        if (this.chartInstance) {
-            this.chartInstance.destroy();
+        if (this[`${chartId}Instance`]) {
+            this[`${chartId}Instance`].destroy();
         }
 
-        this.chartInstance = new Chart(ctx, {
+        this[`${chartId}Instance`] = new Chart(ctx, {
             type: "doughnut",
             data: {
                 labels: ["Mañana", "Tarde", "Noche"],
                 datasets: [
                     {
-                        data: [
-                            visitasPorcentaje.mañana,
-                            visitasPorcentaje.tarde,
-                            visitasPorcentaje.noche,
-                        ],
+                        data: [data.mañana, data.tarde, data.noche],
                         backgroundColor: ["#FF6384", "#36A2EB", "#FFCE56"],
                     },
                 ],
@@ -172,64 +161,98 @@ class VisitasPorHoraChart extends LitElement {
         });
     }
 
-    handleFilterChange(event) {
-        this.filtro = event.target.value;
-        this.updateChart();
+    updateDiaChart() {
+        // Convertimos la fecha seleccionada (string) en un formato base para comparar
+        const selectedDate = this.seleccionDia; // Mantener como string en formato YYYY-MM-DD
+
+        // Filtrar los datos que coincidan exactamente con el día seleccionado
+        const filteredData = this.datos.filter((d) => {
+            const fecha = d.fecha_inicio; // Suponiendo que fecha_inicio es un objeto Date
+            const fechaString = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}-${String(fecha.getDate()).padStart(2, "0")}`;
+            return fechaString === selectedDate;
+        });
+
+        // Calcular visitas (mañana, tarde, noche)
+        this.visitasDia = this.calculateVisits(filteredData);
+
+        // Actualizar el gráfico
+        this.updateChart("chart-dia", this.visitasDia);
     }
 
-    handleDateChange(event) {
-        const value = event.target.value;
 
-        if (this.filtro === "dia") {
-            this.seleccionDia = value;
-        } else if (this.filtro === "mes") {
-            this.seleccionMes = value;
-        } else if (this.filtro === "año") {
-            this.seleccionAno = value;
-        }
 
-        this.updateChart();
+    updateMesChart() {
+        const [year, month] = this.seleccionMes.split("-");
+        const startDate = new Date(year, month - 1, 1);
+        const endDate = new Date(year, month, 0, 23, 59, 59);
+        const filteredData = this.filterDataByRange(startDate, endDate);
+        this.visitasMes = this.calculateVisits(filteredData);
+        this.updateChart("chart-mes", this.visitasMes);
+    }
+
+    updateAnoChart() {
+        const year = parseInt(this.seleccionAno, 10);
+        const startDate = new Date(year, 0, 1);
+        const endDate = new Date(year, 11, 31, 23, 59, 59);
+        const filteredData = this.filterDataByRange(startDate, endDate);
+        this.visitasAno = this.calculateVisits(filteredData);
+        this.updateChart("chart-ano", this.visitasAno);
+    }
+
+    updateAllCharts() {
+        this.updateDiaChart();
+        this.updateMesChart();
+        this.updateAnoChart();
+    }
+
+    handleDiaChange(event) {
+        this.seleccionDia = event.target.value;
+        this.updateDiaChart();
+    }
+
+    handleMesChange(event) {
+        this.seleccionMes = event.target.value;
+        this.updateMesChart();
+    }
+
+    handleAnoChange(event) {
+        this.seleccionAno = event.target.value;
+        this.updateAnoChart();
     }
 
     render() {
         return html`
-      <h3>Gráfico de Visitas por Hora</h3>
-      <select @change="${this.handleFilterChange}">
-        <option value="dia">Día</option>
-        <option value="mes" selected>Mes</option>
-        <option value="año">Año</option>
-      </select>
-
-      ${this.filtro === "dia"
-                ? html`<input
+      <h3>Gráficos de Visitas por Hora</h3>
+      <div class="charts-container">
+        <div class="chart-card">
+          <h4>Por Día</h4>
+          <input
             type="date"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionDia || new Date().toISOString().split("T")[0]}"
-          />`
-                : ""}
-      ${this.filtro === "mes"
-                ? html`<input
+            @change="${this.handleDiaChange}"
+            value="${this.seleccionDia}"
+          />
+          <canvas id="chart-dia"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>Por Mes</h4>
+          <input
             type="month"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionMes ||
-                    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`}"
-          />`
-                : ""}
-      ${this.filtro === "año"
-                ? html`<input
+            @change="${this.handleMesChange}"
+            value="${this.seleccionMes}"
+          />
+          <canvas id="chart-mes"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>Por Año</h4>
+          <input
             type="number"
             min="2000"
             max="2100"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionAno || new Date().getFullYear()}"
-          />`
-                : ""}
-
-      <canvas></canvas>
-      <div class="percentages">
-        <p>Mañana: ${this.visitasPorcentaje.mañana}%</p>
-        <p>Tarde: ${this.visitasPorcentaje.tarde}%</p>
-        <p>Noche: ${this.visitasPorcentaje.noche}%</p>
+            @change="${this.handleAnoChange}"
+            value="${this.seleccionAno}"
+          />
+          <canvas id="chart-ano"></canvas>
+        </div>
       </div>
     `;
     }

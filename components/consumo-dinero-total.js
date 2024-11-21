@@ -6,40 +6,85 @@ import { collection, getDocs } from "firebase/firestore";
 
 class PaymentMethodConsumptionChart extends LitElement {
     static styles = css`
+    .chart-container {
+      display: flex;
+      gap: 20px;
+      overflow-x: auto;
+      padding: 10px;
+      white-space: nowrap;
+      box-sizing: border-box;
+      scroll-behavior: smooth;
+    }
+
+    .chart-item {
+      flex: 0 0 auto;
+      width: 400px;
+      height: auto;
+      margin: 0;
+    }
+
     canvas {
       width: 100%;
-      height: 400px;
+      height: auto;
+      max-height: 300px;
+      box-sizing: border-box;
     }
+
+    .filters {
+      margin-bottom: 10px;
+      width: 100%;
+      text-align: center;
+    }
+
     select,
     input {
-      margin: 10px;
+      margin: 5px;
       padding: 5px;
       font-size: 1em;
+      width: 90%;
     }
-    .totales {
+
+    label {
+      font-size: 1em;
+      margin-bottom: 5px;
+      display: block;
+    }
+
+    .chart-container::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chart-container {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    h1 {
       text-align: center;
-      font-size: 1.2em;
-      margin-top: 10px;
+      margin-top: 20px;
+      font-size: 1.5em;
+      color: #333;
     }
   `;
 
     static properties = {
         datos: { type: Array },
-        filtro: { type: String },
-        seleccionDia: { type: String },
-        seleccionMes: { type: String },
-        seleccionAno: { type: String },
-        totalesPorTipo: { type: Object }, // Objeto para almacenar los totales
+        filtros: { type: Object },
+        totales: { type: Object },
+        chartInstances: { type: Object },
     };
 
     constructor() {
         super();
         this.datos = [];
-        this.filtro = "mes"; // Valor predeterminado
-        this.seleccionDia = "";
-        this.seleccionMes = "";
-        this.seleccionAno = "";
-        this.totalesPorTipo = {}; // Inicializamos el objeto para los totales
+        this.tiposDePago = []; // Nueva propiedad para almacenar los tipos de pago dinámicos
+        this.filtros = {
+            dia: new Date().toISOString().split("T")[0],
+            mes: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+            ano: new Date().getFullYear().toString(),
+        };
+        this.totales = { dia: 0, mes: 0, ano: 0 };
+        this.chartInstances = {};
     }
 
     connectedCallback() {
@@ -51,6 +96,7 @@ class PaymentMethodConsumptionChart extends LitElement {
         try {
             const querySnapshot = await getDocs(collection(db, "DatosFidelizacion"));
             const datosFidelizacion = [];
+            const tiposDePagoSet = new Set(); // Usamos un Set para evitar duplicados
 
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
@@ -60,209 +106,192 @@ class PaymentMethodConsumptionChart extends LitElement {
 
                     Object.keys(parentItem).forEach((id) => {
                         const item = parentItem[id];
-
                         const fechaInicio =
                             item.fecha_inicio && item.fecha_inicio.toDate
                                 ? item.fecha_inicio.toDate()
                                 : null;
 
                         const pagos = item.pago
-                            ? Object.values(item.pago).map(
-                                (p) =>
-                                    new Pago(
-                                        p?.propina || 0,
-                                        p?.tipo || "desconocido",
-                                        p?.total || 0
-                                    )
-                            )
+                            ? Object.values(item.pago).map((p) => {
+                                if (p?.tipo) tiposDePagoSet.add(p.tipo); // Agregar tipo de pago al Set
+                                return {
+                                    propina: parseFloat(p?.propina) || 0,
+                                    tipo: p?.tipo || "desconocido",
+                                    total: parseFloat(p?.total) || 0,
+                                };
+                            })
                             : [];
 
                         if (fechaInicio) {
-                            datosFidelizacion.push({ fecha_inicio: fechaInicio, pagos });
+                            datosFidelizacion.push({
+                                fecha_inicio: fechaInicio.toISOString().split("T")[0],
+                                pagos,
+                            });
                         }
                     });
                 });
             });
 
             this.datos = datosFidelizacion;
-            this.updateChart();
+            this.tiposDePago = Array.from(tiposDePagoSet); // Convertir Set a Array
+            console.log("Tipos de pago dinámicos:", this.tiposDePago); // Verificar los tipos de pago
+            this.updateAllCharts();
         } catch (error) {
             console.error("Error fetching data from Firebase:", error);
         }
     }
 
-    applyFilter() {
-        let startDate, endDate;
 
-        if (this.filtro === "dia" && this.seleccionDia) {
-            const selectedDate = new Date(this.seleccionDia);
-            startDate = new Date(
-                selectedDate.getFullYear(),
-                selectedDate.getMonth(),
-                selectedDate.getDate(),
-                0,
-                0,
-                0,
-                0
-            );
-            endDate = new Date(
-                selectedDate.getFullYear(),
-                selectedDate.getMonth(),
-                selectedDate.getDate(),
-                23,
-                59,
-                59,
-                999
-            );
-        } else if (this.filtro === "mes" && this.seleccionMes) {
-            const [year, month] = this.seleccionMes.split("-");
-            startDate = new Date(year, month - 1, 1);
-            endDate = new Date(year, month, 0);
-            endDate.setHours(23, 59, 59, 999);
-        } else if (this.filtro === "año" && this.seleccionAno) {
-            const year = parseInt(this.seleccionAno, 10);
-            startDate = new Date(year, 0, 1);
-            endDate = new Date(year, 11, 31);
-            endDate.setHours(23, 59, 59, 999);
-        } else {
-            startDate = new Date(0);
-            endDate = new Date();
-            endDate.setHours(23, 59, 59, 999);
+    applyFilter(type) {
+        console.log(`Aplicando filtro: ${type}, valor: ${this.filtros[type]}`);
+        if (!this.filtros[type]) return [];
+
+        let filtered = [];
+        if (type === "dia") {
+            filtered = this.datos.filter((d) => d.fecha_inicio === this.filtros[type]);
+        } else if (type === "mes") {
+            filtered = this.datos.filter((d) => d.fecha_inicio.startsWith(this.filtros[type]));
+        } else if (type === "ano") {
+            filtered = this.datos.filter((d) => d.fecha_inicio.startsWith(this.filtros[type]));
         }
 
-        return this.datos.filter((d) => {
-            if (d.fecha_inicio && d.fecha_inicio instanceof Date) {
-                return d.fecha_inicio >= startDate && d.fecha_inicio <= endDate;
-            }
-            return false;
-        });
+        console.log(`Datos filtrados (${type}):`, filtered);
+        return filtered;
     }
 
-    updateChart() {
-        const ctx = this.shadowRoot.getElementById("paymentChart").getContext("2d");
+    updateChart(type) {
+        const filteredData = this.applyFilter(type);
 
-        const filteredData = this.applyFilter();
-        const groupedData = {};
+        // Usa los tipos de pago dinámicos
+        const groupedData = this.tiposDePago.reduce((acc, tipo) => {
+            acc[tipo] = 0; // Inicializa cada tipo de pago con 0
+            return acc;
+        }, {});
 
-        // Agrupar datos por tipo de pago, sumando los totales de todos los userId
+        // Sumar los valores de los datos filtrados
         filteredData.forEach((dato) => {
             dato.pagos.forEach((pago) => {
-                if (!groupedData[pago.tipo]) {
-                    groupedData[pago.tipo] = 0;
+                if (groupedData.hasOwnProperty(pago.tipo)) {
+                    groupedData[pago.tipo] += parseFloat(pago.total) || 0;
                 }
-                groupedData[pago.tipo] += parseFloat(pago.total); // Sumar total por tipo
             });
         });
 
-        // Guardar los totales por tipo en la propiedad `totalesPorTipo`
-        this.totalesPorTipo = groupedData;
+        const labels = this.tiposDePago;
+        const data = labels.map((label) => groupedData[label] || 0);
 
-        const labels = Object.keys(groupedData); // Tipos de pago
-        const data = Object.values(groupedData); // Totales por tipo de pago
+        const backgroundColors = labels.map((label) => {
+            if (!this.coloresPorTipo) this.coloresPorTipo = {};
+            if (!this.coloresPorTipo[label]) {
+                this.coloresPorTipo[label] = `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(
+                    Math.random() * 255
+                )}, ${Math.floor(Math.random() * 255)}, 0.6)`;
+            }
+            return this.coloresPorTipo[label];
+        });
 
-        if (this.chartInstance) {
-            this.chartInstance.destroy();
+        const canvas = this.shadowRoot.querySelector(`#chart-${type}`);
+        const ctx = canvas.getContext("2d");
+
+        if (this.chartInstances[type]) {
+            this.chartInstances[type].destroy();
         }
 
-        this.chartInstance = new Chart(ctx, {
+        this.chartInstances[type] = new Chart(ctx, {
             type: "bar",
             data: {
                 labels,
                 datasets: [
                     {
-                        label: "Consumo total por tipo de pago",
+                        label: `Consumo Total (${type})`,
                         data,
-                        backgroundColor: labels.map(
-                            () =>
-                                `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255
-                                }, 0.6)`
-                        ),
-                        borderColor: labels.map(
-                            () =>
-                                `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255
-                                }, 1)`
-                        ),
+                        backgroundColor: backgroundColors.map((color) => color.replace("0.6", "1.0")),
                         borderWidth: 1,
+                        borderColor: backgroundColors.map((color) => color.replace("0.6", "1.0")),
                     },
                 ],
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 scales: {
+                    x: {
+                        stacked: true,
+                        barPercentage: 0.5, // Ajusta este valor para hacer las barras más delgadas
+                    },
                     y: {
                         beginAtZero: true,
+                        stacked: true,
+                    },
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                    },
+                },
+                elements: {
+                    bar: {
+                        borderWidth: 2, // Grosor de los bordes de las barras
                     },
                 },
             },
+            
         });
+
+        this.requestUpdate();
     }
 
-    handleFilterChange(event) {
-        this.filtro = event.target.value;
-        this.updateChart();
+
+
+
+
+
+
+    updateAllCharts() {
+        ["dia", "mes", "ano"].forEach((type) => this.updateChart(type));
     }
 
-    handleDateChange(event) {
-        const value = event.target.value;
+    handleFilterChange(event, type) {
+        this.filtros[type] = event.target.value;
+        console.log(`Filtro cambiado (${type}): ${this.filtros[type]}`);
+        this.updateChart(type);
+    }
 
-        if (this.filtro === "dia") {
-            this.seleccionDia = value;
-        } else if (this.filtro === "mes") {
-            this.seleccionMes = value;
-        } else if (this.filtro === "año") {
-            this.seleccionAno = value;
-        }
+    renderChart(type, label, inputType) {
+        return html`
+            <div class="chart-item">
+                <div class="filters">
+                    <label>${label}:</label>
+                    <input
+                        type="${inputType}"
+                        .value="${this.filtros[type]}"
+                        @change="${(e) => this.handleFilterChange(e, type)}"
+                    />
+                </div>
+                <canvas id="chart-${type}"></canvas>
+                <div style="text-align: center; margin-top: 10px;">
+    ${Object.entries(this.totales[type] || {}).map(
+            ([tipo, total]) =>
+                html`<p>Total de ${tipo}: <strong>$${total.toFixed(2)}</strong></p>`
+        )}
+</div>
 
-        this.updateChart();
+            </div>
+        `;
     }
 
     render() {
         return html`
-      <h3>Gráfico de Consumo por Métodos de Pago (Todos los Usuarios)</h3>
-      <select @change="${this.handleFilterChange}">
-        <option value="dia">Día</option>
-        <option value="mes" selected>Mes</option>
-        <option value="año">Año</option>
-      </select>
-
-      ${this.filtro === "dia"
-                ? html`<input
-            type="date"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionDia || new Date().toISOString().split("T")[0]}"
-          />`
-                : ""}
-      ${this.filtro === "mes"
-                ? html`<input
-            type="month"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionMes ||
-                    `${new Date().getFullYear()}-${String(
-                        new Date().getMonth() + 1
-                    ).padStart(2, "0")}`}"
-          />`
-                : ""}
-      ${this.filtro === "año"
-                ? html`<input
-            type="number"
-            min="2000"
-            max="2100"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionAno || new Date().getFullYear()}"
-          />`
-                : ""}
-
-      <canvas id="paymentChart"></canvas>
-      <div class="totales">
-        ${Object.entries(this.totalesPorTipo).map(
-                    ([tipo, total]) => html`<p>${tipo}: $${total.toFixed(2)}</p>`
-                )}
-      </div>
-    `;
+            <div>
+                <h1>Consumo Total por Métodos de Pago</h1>
+                <div class="chart-container">
+                    ${this.renderChart("dia", "Consumo Diario", "date")}
+                    ${this.renderChart("mes", "Consumo Mensual", "month")}
+                    ${this.renderChart("ano", "Consumo Anual", "number")}
+                </div>
+            </div>
+        `;
     }
 }
 
-customElements.define(
-    "payment-method-consumption-chart",
-    PaymentMethodConsumptionChart
-);
+customElements.define("payment-method-consumption-chart", PaymentMethodConsumptionChart);

@@ -1,36 +1,91 @@
 import { LitElement, html, css } from "lit";
 import * as chart from "chart.js";
-import { DatosFidelización } from "../models/DatosFidelizacionModel";
 import { db } from "../firebaseConfig";
 import { collection, getDocs } from "firebase/firestore";
 
 class VisitasPorHoraPorUsuarioChart extends LitElement {
   static styles = css`
-    canvas {
-      width: 100%;
-      height: 400px;
-    }
-    select,
-    input {
-      margin: 10px;
-      padding: 5px;
-      font-size: 1em;
-    }
-  `;
+.chart-container {
+  display: flex; /* Usa flexbox para alinear las gráficas horizontalmente */
+  justify-content: flex-start; /* Alineación de los elementos al inicio del contenedor */
+  gap: 20px; /* Espaciado entre las gráficas */
+  overflow-x: auto; /* Permite desplazamiento horizontal si no cabe en pantalla */
+  padding: 10px;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+}
+
+.chart-item {
+  flex: 0 0 auto; /* Asegura que cada gráfica tenga un ancho fijo */
+  width: 400px; /* Ancho fijo para cada gráfica */
+  height: auto;
+  text-align: center;
+}
+
+canvas {
+  width: 100%; /* Asegura que el canvas ocupe todo el ancho disponible en su contenedor */
+  height: auto;
+  max-height: 300px; /* Altura máxima para mantener un diseño uniforme */
+  box-sizing: border-box;
+}
+
+.filters {
+  margin-bottom: 10px;
+  width: 100%;
+  text-align: center;
+}
+
+select,
+input {
+  margin: 5px;
+  padding: 5px;
+  font-size: 1em;
+  width: auto;
+}
+
+label {
+  font-size: 1em;
+  margin-bottom: 5px;
+  display: block;
+}
+
+.chart-container::-webkit-scrollbar {
+  display: none; /* Oculta la barra de desplazamiento en navegadores basados en WebKit */
+}
+
+.chart-container {
+  -ms-overflow-style: none; /* Oculta la barra de desplazamiento en IE/Edge */
+  scrollbar-width: none; /* Oculta la barra de desplazamiento en Firefox */
+}
+
+h1 {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 1.5em;
+  color: #333;
+}
+
+`;
 
   static properties = {
     datos: { type: Array },
-    filtro: { type: String },
+    seleccionDia: { type: String },
     seleccionMes: { type: String },
     seleccionAno: { type: String },
+    visitasDia: { type: Object },
+    visitasMes: { type: Object },
+    visitasAno: { type: Object },
   };
 
   constructor() {
     super();
     this.datos = [];
-    this.filtro = "mes"; // Valor predeterminado
-    this.seleccionMes = "";
-    this.seleccionAno = "";
+    this.seleccionDia = new Date().toISOString().split("T")[0];
+    this.seleccionMes = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    this.seleccionAno = new Date().getFullYear().toString();
+    this.visitasDia = {};
+    this.visitasMes = {};
+    this.visitasAno = {};
   }
 
   connectedCallback() {
@@ -68,28 +123,13 @@ class VisitasPorHoraPorUsuarioChart extends LitElement {
       });
 
       this.datos = datosFidelizacion;
-      this.updateChart();
+      this.updateAllCharts();
     } catch (error) {
       console.error("Error fetching data from Firebase:", error);
     }
   }
 
-  applyFilter() {
-    let startDate, endDate;
-
-    if (this.filtro === "mes" && this.seleccionMes) {
-      const [year, month] = this.seleccionMes.split("-");
-      startDate = new Date(year, month - 1, 1);
-      endDate = new Date(year, month, 0, 23, 59, 59);
-    } else if (this.filtro === "año" && this.seleccionAno) {
-      const year = parseInt(this.seleccionAno, 10);
-      startDate = new Date(year, 0, 1, 0, 0, 0);
-      endDate = new Date(year, 11, 31, 23, 59, 59);
-    } else {
-      startDate = new Date(0);
-      endDate = new Date();
-    }
-
+  filterDataByRange(startDate, endDate) {
     return this.datos.filter((d) => {
       const fecha = d.fecha_inicio;
       return fecha >= startDate && fecha <= endDate;
@@ -127,21 +167,19 @@ class VisitasPorHoraPorUsuarioChart extends LitElement {
     return usuarios;
   }
 
-  updateChart() {
-    const ctx = this.shadowRoot.querySelector("canvas").getContext("2d");
-    const filteredData = this.applyFilter();
-    const visitasPorUsuario = this.calculateVisitsByUser(filteredData);
+  updateChart(chartId, data) {
+    const ctx = this.shadowRoot.querySelector(`#${chartId}`).getContext("2d");
 
-    const labels = Object.keys(visitasPorUsuario); // Usuarios
-    const dataMañana = labels.map((usuario) => visitasPorUsuario[usuario].mañana);
-    const dataTarde = labels.map((usuario) => visitasPorUsuario[usuario].tarde);
-    const dataNoche = labels.map((usuario) => visitasPorUsuario[usuario].noche);
-
-    if (this.chartInstance) {
-      this.chartInstance.destroy();
+    if (this[`${chartId}Instance`]) {
+      this[`${chartId}Instance`].destroy();
     }
 
-    this.chartInstance = new Chart(ctx, {
+    const labels = Object.keys(data); // Usuarios
+    const dataMañana = labels.map((usuario) => data[usuario].mañana);
+    const dataTarde = labels.map((usuario) => data[usuario].tarde);
+    const dataNoche = labels.map((usuario) => data[usuario].noche);
+
+    this[`${chartId}Instance`] = new Chart(ctx, {
       type: "bar",
       data: {
         labels,
@@ -178,50 +216,99 @@ class VisitasPorHoraPorUsuarioChart extends LitElement {
     });
   }
 
-  handleFilterChange(event) {
-    this.filtro = event.target.value;
-    this.updateChart();
+  updateDiaChart() {
+    const selectedDate = this.seleccionDia; // Mantener como string en formato YYYY-MM-DD
+
+    // Filtrar los datos que coincidan exactamente con el día seleccionado
+    const filteredData = this.datos.filter((d) => {
+      const fecha = d.fecha_inicio; // Suponiendo que fecha_inicio es un objeto Date
+      const fechaString = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}-${String(fecha.getDate()).padStart(2, "0")}`;
+      return fechaString === selectedDate;
+    });
+
+    // Calcular visitas por usuario
+    this.visitasDia = this.calculateVisitsByUser(filteredData);
+
+    // Actualizar el gráfico
+    this.updateChart("chart-dia", this.visitasDia);
   }
 
-  handleDateChange(event) {
-    const value = event.target.value;
 
-    if (this.filtro === "mes") {
-      this.seleccionMes = value;
-    } else if (this.filtro === "año") {
-      this.seleccionAno = value;
-    }
+  updateMesChart() {
+    const [year, month] = this.seleccionMes.split("-");
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59);
+    const filteredData = this.filterDataByRange(startDate, endDate);
+    this.visitasMes = this.calculateVisitsByUser(filteredData);
+    this.updateChart("chart-mes", this.visitasMes);
+  }
 
-    this.updateChart();
+  updateAnoChart() {
+    const year = parseInt(this.seleccionAno, 10);
+    const startDate = new Date(year, 0, 1);
+    const endDate = new Date(year, 11, 31, 23, 59, 59);
+    const filteredData = this.filterDataByRange(startDate, endDate);
+    this.visitasAno = this.calculateVisitsByUser(filteredData);
+    this.updateChart("chart-ano", this.visitasAno);
+  }
+
+  updateAllCharts() {
+    this.updateDiaChart();
+    this.updateMesChart();
+    this.updateAnoChart();
+  }
+
+  handleDiaChange(event) {
+    this.seleccionDia = event.target.value;
+    this.updateDiaChart();
+  }
+
+  handleMesChange(event) {
+    this.seleccionMes = event.target.value;
+    this.updateMesChart();
+  }
+
+  handleAnoChange(event) {
+    this.seleccionAno = event.target.value;
+    this.updateAnoChart();
   }
 
   render() {
     return html`
       <h3>Gráfico de Visitas por Hora y Usuario</h3>
-      <select @change="${this.handleFilterChange}">
-        <option value="mes" selected>Mes</option>
-        <option value="año">Año</option>
-      </select>
+      <div class="chart-container">
+  <div class="chart-item">
+    <h4>Por Día</h4>
+    <input
+      type="date"
+      @change="${this.handleDiaChange}"
+      value="${this.seleccionDia}"
+    />
+    <canvas id="chart-dia"></canvas>
+  </div>
+  <div class="chart-item">
+    <h4>Por Mes</h4>
+    <input
+      type="month"
+      @change="${this.handleMesChange}"
+      value="${this.seleccionMes}"
+    />
+    <canvas id="chart-mes"></canvas>
+  </div>
+  <div class="chart-item">
+    <h4>Por Año</h4>
+    <input
+      type="number"
+      min="2000"
+      max="2100"
+      @change="${this.handleAnoChange}"
+      value="${this.seleccionAno}"
+    />
+    <canvas id="chart-ano"></canvas>
+  </div>
+</div>
 
-      ${this.filtro === "mes"
-        ? html`<input
-            type="month"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionMes ||
-            `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`}"
-          />`
-        : ""}
-      ${this.filtro === "año"
-        ? html`<input
-            type="number"
-            min="2000"
-            max="2100"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionAno || new Date().getFullYear()}"
-          />`
-        : ""}
 
-      <canvas></canvas>
     `;
   }
 }

@@ -242,8 +242,7 @@ class FirebaseUserProductChart extends LitElement {
                 // Solo sumamos una vez el subtotal al índice correcto
                 datasets[usuario].data[labelIndex] += subtotal;
 
-                console.log("Labels:", labels);
-                console.log("Datasets:", datasets);
+
             });
         });
 
@@ -270,6 +269,7 @@ class FirebaseUserProductChart extends LitElement {
                 scales: {
                     x: {
                         stacked: true,
+                        barPercentage: 0.5, // Ajusta este valor para hacer las barras más delgadas
                     },
                     y: {
                         beginAtZero: true,
@@ -283,7 +283,7 @@ class FirebaseUserProductChart extends LitElement {
                 },
                 elements: {
                     bar: {
-                        borderWidth: 2, // Grosor de las barras
+                        borderWidth: 2, // Grosor de los bordes de las barras
                     },
                 },
             },

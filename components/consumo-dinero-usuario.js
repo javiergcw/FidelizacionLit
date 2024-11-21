@@ -4,42 +4,104 @@ import { Pago } from "../models/DatosFidelizacionModel";
 import { db } from "../firebaseConfig";
 import { collection, getDocs } from "firebase/firestore";
 
-class ConsumoPorUsuarioChart extends LitElement {
+class ConsumoPorUsuarioCharts extends LitElement {
     static styles = css`
-    canvas {
-      width: 100%;
-      height: 400px;
-    }
-    select,
-    input {
-      margin: 10px;
-      padding: 5px;
-      font-size: 1em;
-    }
-    .totales {
-      text-align: center;
-      font-size: 1.2em;
-      margin-top: 10px;
-    }
-  `;
+.chart-container {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto; /* Habilita el scroll horizontal */
+  overflow-y: hidden; /* Elimina el scroll vertical */
+  padding: 10px;
+  white-space: nowrap; /* Previene el salto de línea */
+  box-sizing: border-box; /* Asegura que el padding no agregue tamaño adicional */
+  scroll-behavior: smooth; /* Suaviza el desplazamiento */
+}
+
+
+
+ .chart-item {
+  flex: 0 0 auto; /* Evita que los gráficos se redimensionen */
+  width: 90%; /* En pantallas pequeñas, los gráficos ocupan el 90% del viewport */
+  max-width: 400px; /* Límite máximo para pantallas grandes */
+  height: auto; /* Ajusta la altura dinámicamente */
+  margin: 0;
+}
+
+
+
+canvas {
+  width: 100%; /* Ocupa todo el ancho del contenedor */
+  height: auto; /* Mantiene la proporción */
+  max-height: 300px; /* Límite máximo de altura */
+  box-sizing: border-box; /* Asegura que el padding no afecte el tamaño */
+}
+
+
+  .filters {
+    margin-bottom: 10px;
+    width: 100%;
+    text-align: center;
+  }
+
+  select,
+  input {
+    margin: 5px;
+    padding: 5px;
+    font-size: 1em;
+    width: 90%;
+  }
+
+  label {
+    font-size: 1em;
+    margin-bottom: 5px;
+    display: block;
+  }
+
+  .chart-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chart-container {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  h1 {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 1.5em;
+    color: #333;
+  }
+    @media (max-width: 768px) {
+  .chart-container {
+    gap: 10px; /* Reduce el espacio entre gráficos */
+  }
+
+  .chart-item {
+    width: 90%; /* Los gráficos ocupan casi todo el ancho del viewport */
+    max-width: none; /* Elimina restricciones de ancho máximo */
+  }
+}
+
+`;
 
     static properties = {
         datos: { type: Array },
-        filtro: { type: String },
-        seleccionDia: { type: String },
-        seleccionMes: { type: String },
-        seleccionAno: { type: String },
-        totalesPorUsuario: { type: Object }, // Objeto para almacenar los totales por usuario
+        filtros: { type: Object },
+        totals: { type: Object },
+        chartInstances: { type: Object },
     };
 
     constructor() {
         super();
         this.datos = [];
-        this.filtro = "mes"; // Valor predeterminado
-        this.seleccionDia = "";
-        this.seleccionMes = "";
-        this.seleccionAno = "";
-        this.totalesPorUsuario = {}; // Inicializamos el objeto para los totales por usuario
+        this.filtros = {
+            dia: new Date().toISOString().split("T")[0],
+            mes: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+            ano: new Date().getFullYear().toString(),
+        };
+        this.totals = { dia: {}, mes: {}, ano: {} };
+        this.chartInstances = {};
     }
 
     connectedCallback() {
@@ -55,192 +117,216 @@ class ConsumoPorUsuarioChart extends LitElement {
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
 
-                Object.keys(data).forEach((parentKey) => {
-                    const parentItem = data[parentKey];
+                Object.keys(data).forEach((userId) => {
+                    const userEntries = data[userId];
 
-                    Object.keys(parentItem).forEach((id) => {
-                        const item = parentItem[id];
+                    Object.keys(userEntries).forEach((entryId) => {
+                        const entry = userEntries[entryId];
 
                         const fechaInicio =
-                            item.fecha_inicio && item.fecha_inicio.toDate
-                                ? item.fecha_inicio.toDate()
+                            entry.fecha_inicio && entry.fecha_inicio.toDate
+                                ? entry.fecha_inicio.toDate()
                                 : null;
 
-                        const pagos = item.pago
-                            ? Object.values(item.pago).map(
-                                (p) =>
-                                    new Pago(
-                                        p?.propina || 0,
-                                        p?.tipo || "desconocido",
-                                        p?.total || 0
-                                    )
-                            )
+                        const pagos = entry.pago
+                            ? Object.values(entry.pago).map((p) => ({
+                                propina: parseFloat(p?.propina || "0"),
+                                tipo: p?.tipo || "desconocido",
+                                total: parseFloat(p?.total || "0"), // Convertimos a número
+                            }))
                             : [];
 
+
                         if (fechaInicio) {
-                            datosFidelizacion.push({ usuario: parentKey, fecha_inicio: fechaInicio, pagos });
+                            datosFidelizacion.push({
+                                usuario: userId,
+                                fecha_inicio: fechaInicio,
+                                pagos,
+                            });
                         }
                     });
                 });
             });
 
             this.datos = datosFidelizacion;
-            this.updateChart();
+            this.updateAllCharts();
         } catch (error) {
             console.error("Error fetching data from Firebase:", error);
         }
     }
 
-    applyFilter() {
+
+    applyFilter(type) {
+        if (!this.filtros[type]) {
+            return [];
+        }
+
+        const { dia, mes, ano } = this.filtros;
+
         let startDate, endDate;
 
-        if (this.filtro === "dia" && this.seleccionDia) {
-            const selectedDate = new Date(this.seleccionDia);
-            startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 0, 0, 0, 0);
-            endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59, 999);
-        } else if (this.filtro === "mes" && this.seleccionMes) {
-            const [year, month] = this.seleccionMes.split("-");
-            startDate = new Date(year, month - 1, 1);
-            endDate = new Date(year, month, 0);
-            endDate.setHours(23, 59, 59, 999);
-        } else if (this.filtro === "año" && this.seleccionAno) {
-            const year = parseInt(this.seleccionAno, 10);
-            startDate = new Date(year, 0, 1);
-            endDate = new Date(year, 11, 31);
-            endDate.setHours(23, 59, 59, 999);
-        } else {
-            startDate = new Date(0);
-            endDate = new Date();
-            endDate.setHours(23, 59, 59, 999);
+        if (type === "dia") {
+            // Convertir la fecha seleccionada a string
+            const selectedDate = new Date(dia);
+            const selectedDateStr = selectedDate.toISOString().split("T")[0];
+
+            // Filtrar los datos por fecha exacta
+            return this.datos.filter((d) => {
+                const fechaInicioStr = d.fecha_inicio.toISOString().split("T")[0];
+                return fechaInicioStr === selectedDateStr;
+            });
         }
 
-        return this.datos.filter((d) => {
-            if (d.fecha_inicio && d.fecha_inicio instanceof Date) {
-                return d.fecha_inicio >= startDate && d.fecha_inicio <= endDate;
-            }
-            return false;
-        });
+        if (type === "mes") {
+            const [selectedYear, selectedMonth] = mes.split("-").map(Number);
+
+            return this.datos.filter((d) => {
+                const fecha = d.fecha_inicio;
+                return (
+                    fecha.getFullYear() === selectedYear &&
+                    fecha.getMonth() + 1 === selectedMonth
+                );
+            });
+        }
+
+        if (type === "ano") {
+            const selectedYear = parseInt(ano, 10);
+
+            return this.datos.filter((d) => {
+                return d.fecha_inicio.getFullYear() === selectedYear;
+            });
+        }
+
+        return [];
     }
 
-    updateChart() {
-        const ctx = this.shadowRoot.getElementById("userConsumptionChart").getContext("2d");
+    generateColor(usuario) {
+        const hash = usuario.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+        const red = (hash * 73) % 255;
+        const green = (hash * 101) % 255;
+        const blue = (hash * 37) % 255;
+        return `rgba(${red}, ${green}, ${blue}, 0.8)`; // Opacidad fija
+    }
 
-        const filteredData = this.applyFilter();
-        const groupedData = {};
 
-        // Agrupar datos por usuario, sumando los totales de sus pagos
+    updateChart(type) {
+        const filteredData = this.applyFilter(type);
+        const totals = {};
+    
         filteredData.forEach((dato) => {
             const usuario = dato.usuario;
-            if (!groupedData[usuario]) {
-                groupedData[usuario] = 0;
-            }
+            if (!totals[usuario]) totals[usuario] = 0;
+    
             dato.pagos.forEach((pago) => {
-                groupedData[usuario] += parseFloat(pago.total);
+                totals[usuario] += pago.total;
             });
         });
-
-        // Guardar los totales por usuario en la propiedad `totalesPorUsuario`
-        this.totalesPorUsuario = groupedData;
-
-        const labels = Object.keys(groupedData); // Usuarios
-        const data = Object.values(groupedData); // Totales por usuario
-
-        if (this.chartInstance) {
-            this.chartInstance.destroy();
+    
+        this.totals[type] = totals;
+    
+        const labels = Object.keys(totals);
+        const data = Object.values(totals);
+    
+        // Si no hay datos, inicializa con un valor predeterminado
+        const chartData = {
+            labels: labels.length > 0 ? labels : ["Sin datos"],
+            datasets: [
+                {
+                    label: `Consumo (${type})`,
+                    data: data.length > 0 ? data : [0], // Asegura que siempre haya al menos un dato
+                    backgroundColor: labels.map((usuario) =>
+                        this.generateColor(usuario)
+                    ),
+                    borderColor: labels.map((usuario) =>
+                        this.generateColor(usuario).replace("0.8", "1")
+                    ),
+                    borderWidth: 1,
+                    barThickness: 15,
+                    maxBarThickness: 20,
+                },
+            ],
+        };
+    
+        const canvas = this.shadowRoot.querySelector(`#chart-${type}`);
+        const ctx = canvas.getContext("2d");
+    
+        if (this.chartInstances[type]) {
+            this.chartInstances[type].destroy();
         }
-
-        this.chartInstance = new Chart(ctx, {
+    
+        this.chartInstances[type] = new Chart(ctx, {
             type: "bar",
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: "Consumo total por usuario",
-                        data,
-                        backgroundColor: labels.map(
-                            () =>
-                                `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 0.6)`
-                        ),
-                        borderColor: labels.map(
-                            () =>
-                                `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 1)`
-                        ),
-                        borderWidth: 1,
-                    },
-                ],
-            },
+            data: chartData,
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 scales: {
                     y: {
-                        beginAtZero: true,
+                        beginAtZero: true, // Asegura que siempre empiece en 0
+                        min: 0, // Refuerza que el mínimo del eje Y sea 0
+                        ticks: {
+                            stepSize: 10, // Personaliza los intervalos según los datos
+                        },
+                    },
+                    x: {
+                        ticks: {
+                            autoSkip: true,
+                            maxRotation: 45,
+                            minRotation: 0,
+                        },
+                    },
+                },
+                plugins: {
+                    legend: {
+                        display: true,
                     },
                 },
             },
         });
     }
+    
 
-    handleFilterChange(event) {
-        this.filtro = event.target.value;
-        this.updateChart();
+
+
+
+
+    updateAllCharts() {
+        ["dia", "mes", "ano"].forEach((type) => this.updateChart(type));
     }
 
-    handleDateChange(event) {
-        const value = event.target.value;
+    handleFilterChange(event, type) {
+        this.filtros[type] = event.target.value;
+        this.updateChart(type);
+    }
 
-        if (this.filtro === "dia") {
-            this.seleccionDia = value;
-        } else if (this.filtro === "mes") {
-            this.seleccionMes = value;
-        } else if (this.filtro === "año") {
-            this.seleccionAno = value;
-        }
-
-        this.updateChart();
+    renderChart(type, label, inputType) {
+        return html`
+      <div class="chart-item">
+        <div class="filters">
+          <label>${label}:</label>
+          <input
+            type="${inputType}"
+            .value="${this.filtros[type]}"
+            @change="${(e) => this.handleFilterChange(e, type)}"
+          />
+        </div>
+        <canvas id="chart-${type}"></canvas>
+      </div>
+    `;
     }
 
     render() {
         return html`
-      <h3>Gráfico de Consumo por Usuario</h3>
-      <select @change="${this.handleFilterChange}">
-        <option value="dia">Día</option>
-        <option value="mes" selected>Mes</option>
-        <option value="año">Año</option>
-      </select>
-
-      ${this.filtro === "dia"
-                ? html`<input
-            type="date"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionDia || new Date().toISOString().split("T")[0]}"
-          />`
-                : ""}
-      ${this.filtro === "mes"
-                ? html`<input
-            type="month"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionMes ||
-                    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`}"
-          />`
-                : ""}
-      ${this.filtro === "año"
-                ? html`<input
-            type="number"
-            min="2000"
-            max="2100"
-            @change="${this.handleDateChange}"
-            value="${this.seleccionAno || new Date().getFullYear()}"
-          />`
-                : ""}
-
-      <canvas id="userConsumptionChart"></canvas>
-      <div class="totales">
-        ${Object.entries(this.totalesPorUsuario).map(
-                    ([usuario, total]) => html`<p>${usuario}: $${total.toFixed(2)}</p>`
-                )}
+      <div>
+        <h1>Gráficas de Consumo por Usuario</h1>
+        <div class="chart-container">
+          ${this.renderChart("dia", "Filtro por Día", "date")}
+          ${this.renderChart("mes", "Filtro por Mes", "month")}
+          ${this.renderChart("ano", "Filtro por Año", "number")}
+        </div>
       </div>
     `;
     }
 }
 
-customElements.define("consumo-por-usuario-chart", ConsumoPorUsuarioChart);
+customElements.define("consumo-por-usuario-charts", ConsumoPorUsuarioCharts);
